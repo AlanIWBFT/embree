@@ -133,9 +133,9 @@ namespace embree
           if (!object->getBounds().empty())
           {
 #if ENABLE_DIRECT_SAH_MERGE_BUILDER
-            refs[nextRef++] = BVHNBuilderTwoLevel::BuildRef(object->getBounds(),object->root,(unsigned int)objectID,(unsigned int)mesh->size());
+            refs[nextRef++] = BuildRef<NodeRef>(object->getBounds(),object->root,(unsigned int)objectID,(unsigned int)mesh->size());
 #else
-            refs[nextRef++] = BVHNBuilderTwoLevel::BuildRef(object->getBounds(),object->root);
+            refs[nextRef++] = BuildRef<NodeRef>(object->getBounds(),object->root);
 #endif
           }
         }
@@ -222,17 +222,20 @@ namespace embree
 #if ENABLE_DIRECT_SAH_MERGE_BUILDER
             refs.resize(extSize); 
          
-            NodeRef root = BVHBuilderBinnedOpenMergeSAH::build<NodeRef,BuildRef>(
+            NodeRef root = BVHBuilderBinnedOpenMergeSAH::build<NodeRef,BuildRef<NodeRef>>(
               typename BVH::CreateAlloc(bvh),
               typename BVH::AlignedNode::Create2(),
               typename BVH::AlignedNode::Set2(),
               
-              [&] (const BuildRef* refs, const range<size_t>& range, const FastAllocator::CachedAllocator& alloc) -> NodeRef  {
+              [&] (const BuildRef<NodeRef>* refs, const range<size_t>& range, const FastAllocator::CachedAllocator& alloc) -> NodeRef  {
                 assert(range.size() == 1);
                 return (NodeRef) refs[range.begin()].node;
               },
-              [&] (BuildRef &bref, BuildRef *refs) -> size_t { 
+              [&] (BuildRef<NodeRef> &bref, BuildRef<NodeRef> *refs) -> size_t { 
                 return openBuildRef(bref,refs);
+              }, 
+              [&](NodeRef& node) -> bool {
+                return !node.isLeaf();
               },              
               [&] (size_t dn) { bvh->scene->progressMonitor(0); },
               refs.data(),extSize,pinfo,settings);

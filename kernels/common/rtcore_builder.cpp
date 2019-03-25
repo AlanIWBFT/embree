@@ -215,6 +215,89 @@ namespace embree
       return root;
     }
 
+    void* rtcBuildTopLevelBVHOpenMerge(const RTCBuildArguments* arguments)
+    {
+      BVH* bvh = (BVH*)arguments->bvh;
+      RTCBuildRef* brefs =  arguments->brefs;
+      size_t primitiveCount = arguments->primitiveCount;
+      RTCCreateNodeFunction createNode = arguments->createNode;
+      RTCSetNodeChildrenFunction setNodeChildren = arguments->setNodeChildren;
+      RTCSetNodeBoundsFunction setNodeBounds = arguments->setNodeBounds;
+      RTCProgressMonitorFunction buildProgress = arguments->buildProgress;
+      RTCOpenBuildRefFunction openBRef = arguments->openBRef;
+      RTCCanOpenBuildRefNodeFucntion canOpenBRefNode = arguments->canOpenBRefNode;
+      RTCCreateTopLevelLeafFunction createTopLevelLeaf = arguments->createTopLevelLeaf;
+      void* userPtr = arguments->userPtr;
+
+      std::atomic<size_t> progress(0);
+
+      /* calculate priminfo */
+      auto computeBounds = [&](const range<size_t>& r) -> CentGeomBBox3fa
+      {
+        CentGeomBBox3fa bounds(empty);
+        for (size_t j=r.begin(); j<r.end(); j++)
+          bounds.extend((BBox3fa&)brefs[j]);
+        return bounds;
+      };
+      const CentGeomBBox3fa bounds =
+        parallel_reduce(size_t(0), primitiveCount, size_t(1024), size_t(1024), CentGeomBBox3fa(empty), computeBounds, CentGeomBBox3fa::merge2);
+
+      const PrimInfo pinfo(0, primitiveCount, bounds);
+
+      /* build BVH */
+      GeneralBVHBuilder::Settings settings(*arguments);
+      settings.minLeafSize = 1;
+      settings.maxLeafSize = 1;
+
+      void* root = BVHBuilderBinnedOpenMergeSAH::build<void*>(
+        /* thread local allocator for fast allocations */
+        [&]() -> FastAllocator::CachedAllocator {
+          return bvh->allocator.getCachedAllocator();
+        },
+
+        /* lambda function that creates BVH nodes */
+        [&](BVHBuilderBinnedOpenMergeSAH::BuildRecord* children, const size_t N, const FastAllocator::CachedAllocator& alloc) -> void*
+        {
+          void* node = createNode((RTCThreadLocalAllocator)&alloc, (unsigned int)N, userPtr);
+          const RTCBounds* cbounds[GeneralBVHBuilder::MAX_BRANCHING_FACTOR];
+          for (size_t i=0; i<N; i++) cbounds[i] = (const RTCBounds*)&children[i].prims.geomBounds;
+          setNodeBounds(node, cbounds, (unsigned int)N, userPtr);
+          return node;
+        },
+
+        /* lambda function that updates BVH nodes */
+        [&](const BVHBuilderBinnedOpenMergeSAH::BuildRecord& precord, const BVHBuilderBinnedOpenMergeSAH::BuildRecord* crecords, void* node, void** children, const size_t N) -> void* {
+          setNodeChildren(node, children, (unsigned int)N, userPtr);
+          return node;
+        },
+
+        [&](const BuildRef<void*>* refs, const range<size_t>& range, const FastAllocator::CachedAllocator& alloc) -> void* {
+          assert(range.size() == 1);
+          return createTopLevelLeaf((RTCThreadLocalAllocator)&alloc, *(const RTCBuildRef*)&refs[range.begin()], userPtr);
+        },
+
+        [&](BuildRef<void*> &bref, BuildRef<void*> *refs) -> size_t {
+          return openBRef(*(const RTCBuildRef*)&bref, (RTCBuildRef* const)refs, userPtr);
+        },
+
+        [&](void* node) -> bool {
+          return canOpenBRefNode(node, userPtr);
+        },
+
+        /* progress monitor function */
+        [&](size_t dn) {
+          if (!buildProgress) return true;
+          const size_t n = progress.fetch_add(dn)+dn;
+          const double f = std::min(1.0, double(n)/double(primitiveCount));
+          return buildProgress(userPtr, f);
+        },
+
+        (BuildRef<void*>*)brefs, arguments->primitiveArrayCapacity, pinfo, settings);
+
+      bvh->allocator.cleanup();
+      return root;
+    }
+
     static __forceinline const std::pair<CentGeomBBox3fa,unsigned int> mergePair(const std::pair<CentGeomBBox3fa,unsigned int>& a, const std::pair<CentGeomBBox3fa,unsigned int>& b) {
       CentGeomBBox3fa centBounds = CentGeomBBox3fa::merge2(a.first,b.first);
       unsigned int maxGeomID = max(a.second,b.second); 
@@ -369,28 +452,44 @@ RTC_NAMESPACE_BEGIN
       RTC_VERIFY_HANDLE(arguments->createNode);
       RTC_VERIFY_HANDLE(arguments->setNodeChildren);
       RTC_VERIFY_HANDLE(arguments->setNodeBounds);
-      RTC_VERIFY_HANDLE(arguments->createLeaf);
 
       if (arguments->primitiveArrayCapacity < arguments->primitiveCount)
-        throw_RTCError(RTC_ERROR_INVALID_ARGUMENT,"primitiveArrayCapacity must be greater or equal to primitiveCount")
+        throw_RTCError(RTC_ERROR_INVALID_ARGUMENT, "primitiveArrayCapacity must be greater or equal to primitiveCount");
+
+      if (arguments->primitives != nullptr && arguments->brefs != nullptr)
+        throw_RTCError(RTC_ERROR_INVALID_ARGUMENT, "Either primitives or brefs can be provided but not both");
 
       /* initialize the allocator */
-      bvh->allocator.init_estimate(arguments->primitiveCount*sizeof(BBox3fa));
+      if (arguments->primitives != nullptr)
+        bvh->allocator.init_estimate(arguments->primitiveCount*sizeof(BBox3fa));
+      else
+        bvh->allocator.init_estimate(arguments->primitiveCount*sizeof(BuildRef<void*>));
       bvh->allocator.reset();
 
-      /* switch between differnet builders based on quality level */
-      if (arguments->buildQuality == RTC_BUILD_QUALITY_LOW)
-        return rtcBuildBVHMorton(arguments);
-      else if (arguments->buildQuality == RTC_BUILD_QUALITY_MEDIUM)
-        return rtcBuildBVHBinnedSAH(arguments);
-      else if (arguments->buildQuality == RTC_BUILD_QUALITY_HIGH) {
-        if (arguments->splitPrimitive == nullptr || arguments->primitiveArrayCapacity <= arguments->primitiveCount)
+      if (arguments->primitives != nullptr)
+      {
+        RTC_VERIFY_HANDLE(arguments->createLeaf);
+        /* switch between differnet builders based on quality level */
+        if (arguments->buildQuality == RTC_BUILD_QUALITY_LOW)
+          return rtcBuildBVHMorton(arguments);
+        else if (arguments->buildQuality == RTC_BUILD_QUALITY_MEDIUM)
           return rtcBuildBVHBinnedSAH(arguments);
-        else
-          return rtcBuildBVHSpatialSAH(arguments);
+        else if (arguments->buildQuality == RTC_BUILD_QUALITY_HIGH) {
+          if (arguments->splitPrimitive == nullptr || arguments->primitiveArrayCapacity <= arguments->primitiveCount)
+            return rtcBuildBVHBinnedSAH(arguments);
+          else
+            return rtcBuildBVHSpatialSAH(arguments);
       }
       else
-        throw_RTCError(RTC_ERROR_INVALID_OPERATION,"invalid build quality");
+        throw_RTCError(RTC_ERROR_INVALID_OPERATION, "invalid build quality");
+      }
+      else
+      {
+        RTC_VERIFY_HANDLE(arguments->canOpenBRefNode);
+        RTC_VERIFY_HANDLE(arguments->openBRef);
+        RTC_VERIFY_HANDLE(arguments->createTopLevelLeaf);
+        return rtcBuildTopLevelBVHOpenMerge(arguments);
+      }
 
       /* if we are in dynamic mode, then do not clear temporary data */
       if (!(arguments->buildFlags & RTC_BUILD_FLAG_DYNAMIC))

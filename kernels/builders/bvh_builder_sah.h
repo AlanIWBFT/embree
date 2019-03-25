@@ -519,6 +519,7 @@ namespace embree
         typename UpdateNodeFunc, 
         typename CreateLeafFunc, 
         typename NodeOpenerFunc, 
+        typename CanOpenNodeFunc, 
         typename ProgressMonitor>
         
         static ReductionTy build(CreateAllocFunc createAlloc, 
@@ -526,14 +527,15 @@ namespace embree
                                  UpdateNodeFunc updateNode, 
                                  const CreateLeafFunc& createLeaf, 
                                  NodeOpenerFunc nodeOpenerFunc,
+                                 CanOpenNodeFunc canOpenNodeFunc,
                                  ProgressMonitor progressMonitor,
                                  BuildRef* prims, 
                                  const size_t extSize,
                                  const PrimInfo& pinfo, 
                                  const Settings& settings)
       {
-        typedef HeuristicArrayOpenMergeSAH<NodeOpenerFunc,BuildRef,NUM_OBJECT_BINS_HQ> Heuristic;
-        Heuristic heuristic(nodeOpenerFunc,prims,settings.branchingFactor);
+        typedef HeuristicArrayOpenMergeSAH<NodeOpenerFunc,CanOpenNodeFunc,BuildRef,NUM_OBJECT_BINS_HQ> Heuristic;
+        Heuristic heuristic(nodeOpenerFunc,canOpenNodeFunc,prims,settings.branchingFactor);
 
         return GeneralBVHBuilder::build<ReductionTy,Heuristic,Set,BuildRef>(
           heuristic,

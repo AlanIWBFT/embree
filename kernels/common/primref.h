@@ -148,4 +148,49 @@ namespace embree
     __forceinline size_t y() const { return (size_t)sy & 0x7fff; }
     
   };
+
+	template<typename NodeRef>
+	struct BuildRef : public PrimRef
+	{
+	public:
+		__forceinline BuildRef() {}
+
+		__forceinline BuildRef(const BBox3fa& bounds, NodeRef node)
+			: PrimRef(bounds, (size_t)node), node(node)
+		{
+			if (node.isLeaf())
+				bounds_area = 0.0f;
+			else
+				bounds_area = area(this->bounds());
+		}
+
+		/* used by the open/merge bvh builder */
+		__forceinline BuildRef(const BBox3fa& bounds, NodeRef node, const unsigned int geomID, const unsigned int numPrimitives)
+			: PrimRef(bounds, geomID, numPrimitives), node(node)
+		{
+			/* important for relative buildref ordering */
+			if (node.isLeaf())
+				bounds_area = 0.0f;
+			else
+				bounds_area = area(this->bounds());
+		}
+
+		__forceinline size_t size() const {
+			return primID();
+		}
+
+		friend bool operator< (const BuildRef& a, const BuildRef& b) {
+			return a.bounds_area < b.bounds_area;
+		}
+
+		friend __forceinline std::ostream& operator<<(std::ostream& cout, const BuildRef& ref) {
+			return cout << "{ lower = " << ref.lower << ", upper = " << ref.upper << ", center2 = " << ref.center2() << ", geomID = " << ref.geomID() << ", numPrimitives = " << ref.numPrimitives() << ", bounds_area = " << ref.bounds_area << " }";
+		}
+
+		__forceinline unsigned int numPrimitives() const { return primID(); }
+
+	public:
+		NodeRef node;
+		float bounds_area;
+	};
 }

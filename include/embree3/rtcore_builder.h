@@ -32,6 +32,16 @@ struct RTC_ALIGN(32) RTCBuildPrimitive
   unsigned int primID;
 };
 
+struct RTC_ALIGN(32) RTCBuildRef
+{
+	float lower_x, lower_y, lower_z;
+	unsigned int geomID;
+	float upper_x, upper_y, upper_z;
+	unsigned int numPrimitives;
+	void* node;
+	float bounds_area;
+};
+
 /* Opaque thread local allocator type */
 typedef struct RTCThreadLocalAllocatorTy* RTCThreadLocalAllocator;
 
@@ -49,6 +59,12 @@ typedef void* (*RTCCreateLeafFunction) (RTCThreadLocalAllocator allocator, const
 
 /* Callback to split a build primitive */
 typedef void (*RTCSplitPrimitiveFunction) (const struct RTCBuildPrimitive* primitive, unsigned int dimension, float position, struct RTCBounds* leftBounds, struct RTCBounds* rightBounds, void* userPtr);
+
+typedef size_t (*RTCOpenBuildRefFunction) (const RTCBuildRef BRef, RTCBuildRef* const openedBRefs, void* userPtr);
+
+typedef bool (*RTCCanOpenBuildRefNodeFucntion) (void* nodePtr, void* userPtr);
+
+typedef void* (*RTCCreateTopLevelLeafFunction) (RTCThreadLocalAllocator allocator, const RTCBuildRef BRef, void* userPtr);
 
 /* Build flags */
 enum RTCBuildFlags
@@ -76,12 +92,17 @@ struct RTCBuildArguments
   struct RTCBuildPrimitive* primitives;
   size_t primitiveCount;
   size_t primitiveArrayCapacity;
+
+  struct RTCBuildRef* brefs;
   
   RTCCreateNodeFunction createNode;
   RTCSetNodeChildrenFunction setNodeChildren;
   RTCSetNodeBoundsFunction setNodeBounds;
   RTCCreateLeafFunction createLeaf;
   RTCSplitPrimitiveFunction splitPrimitive;
+  RTCOpenBuildRefFunction openBRef;
+  RTCCanOpenBuildRefNodeFucntion canOpenBRefNode;
+  RTCCreateTopLevelLeafFunction createTopLevelLeaf;
   RTCProgressMonitorFunction buildProgress;
   void* userPtr;
 };
@@ -104,11 +125,15 @@ RTC_FORCEINLINE struct RTCBuildArguments rtcDefaultBuildArguments()
   args.primitives = NULL;
   args.primitiveCount = 0;
   args.primitiveArrayCapacity = 0;
+  args.brefs = NULL;
   args.createNode = NULL;
   args.setNodeChildren = NULL;
   args.setNodeBounds = NULL;
   args.createLeaf = NULL;
   args.splitPrimitive = NULL;
+  args.openBRef = NULL;
+  args.canOpenBRefNode = NULL;
+  args.createTopLevelLeaf = NULL;
   args.buildProgress = NULL;
   args.userPtr = NULL;
   return args;

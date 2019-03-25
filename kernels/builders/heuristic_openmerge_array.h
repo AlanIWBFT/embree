@@ -40,7 +40,7 @@ namespace embree
   namespace isa
   { 
     /*! Performs standard object binning */
-    template<typename NodeOpenerFunc, typename PrimRef, size_t OBJECT_BINS>
+    template<typename NodeOpenerFunc, typename CanOpenNodeFunc, typename PrimRef, size_t OBJECT_BINS>
       struct HeuristicArrayOpenMergeSAH
       {
         typedef BinSplit<OBJECT_BINS> Split;
@@ -57,15 +57,15 @@ namespace embree
           : prims0(nullptr) {}
         
         /*! remember prim array */
-        __forceinline HeuristicArrayOpenMergeSAH (const NodeOpenerFunc& nodeOpenerFunc, PrimRef* prims0, size_t max_open_size)
-          : prims0(prims0), nodeOpenerFunc(nodeOpenerFunc), max_open_size(max_open_size) 
+        __forceinline HeuristicArrayOpenMergeSAH (const NodeOpenerFunc& nodeOpenerFunc, const CanOpenNodeFunc& canOpenNodeFunc, PrimRef* prims0, size_t max_open_size)
+          : prims0(prims0), nodeOpenerFunc(nodeOpenerFunc), canOpenNodeFunc(canOpenNodeFunc), max_open_size(max_open_size)
         {
           assert(max_open_size <= MAX_OPENED_CHILD_NODES);
         }
 
         struct OpenHeuristic
         {
-          __forceinline OpenHeuristic( const PrimInfoExtRange& pinfo )
+          __forceinline OpenHeuristic( const PrimInfoExtRange& pinfo, const CanOpenNodeFunc& canOpenNodeFunc ) : canOpenNodeFunc(canOpenNodeFunc)
           {
             const Vec3fa diag = pinfo.geomBounds.size();
             dim = maxDim(diag);
@@ -74,12 +74,13 @@ namespace embree
           }
 
           __forceinline bool operator () ( PrimRef& prim ) const {
-            return !prim.node.isLeaf() && prim.bounds().size()[dim] * inv_max_extend > MAX_EXTEND_THRESHOLD;
+            return canOpenNodeFunc(prim.node) && prim.bounds().size()[dim] * inv_max_extend > MAX_EXTEND_THRESHOLD;
           }
 
         private:
           size_t dim;
           float inv_max_extend;
+          const CanOpenNodeFunc& canOpenNodeFunc;
         };
 
         /*! compute extended ranges */
@@ -129,7 +130,7 @@ namespace embree
         /* estimates the extra space required when opening, and checks if all primitives are from same geometry */
         __noinline std::pair<size_t,bool> getProperties(const PrimInfoExtRange& set)
         {
-          const OpenHeuristic heuristic(set);
+          const OpenHeuristic heuristic(set, canOpenNodeFunc);
           const unsigned int geomID = prims0[set.begin()].geomID();
           
           auto body = [&] (const range<size_t>& r) -> std::pair<size_t,bool> { 
@@ -138,7 +139,7 @@ namespace embree
             for (size_t i=r.begin(); i<r.end(); i++) {
               commonGeomID &= prims0[i].geomID() == geomID; 
               if (heuristic(prims0[i]))
-                opens += prims0[i].node.getN()-1; // coarse approximation
+                opens += max_open_size-1; // coarse approximation
             }
             return std::pair<size_t,bool>(opens,commonGeomID); 
           };
@@ -151,7 +152,7 @@ namespace embree
         // FIXME: should consider maximum available extended size 
         __noinline void openNodesBasedOnExtend(PrimInfoExtRange& set)
         {
-          const OpenHeuristic heuristic(set);
+          const OpenHeuristic heuristic(set, canOpenNodeFunc);
           const size_t ext_range_start = set.end();
 
           if (false && set.size() < PARALLEL_THRESHOLD) 
@@ -232,7 +233,7 @@ namespace embree
 
                 for (size_t j=0; j<n; j++)
                   if (heuristic(tmp[j]))
-                    next_iteration_extra_elements += tmp[j].node.getN()-1; // coarse approximation
+                    next_iteration_extra_elements += max_open_size-1; // coarse approximation
 
               }
             }
