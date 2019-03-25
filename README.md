@@ -1,3 +1,8 @@
+Embree's open-merge two-level BVH builder
+===============
+As mentioned in the paper 'Improved Two-Level BVHs using Partial Re-Braiding' (www.sven-woop.de/papers/2017-HPG-openmerge.pdf), embree's open-merge BVH builder boosts your two-level BVH ray tracer by almost 2x in scenes with heavily overlapped instances. This fork exposes embree's internal `BVHBuilderBinnedOpenMergeSAH` to `rtcBuildBVH` so that it can be used by external programs. Compare the fork to the original and you'll know how to use it.
+
+
 % Embree: High Performance Ray Tracing Kernels 3.5.2
 % Intel Corporation
 
