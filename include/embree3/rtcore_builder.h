@@ -34,12 +34,12 @@ struct RTC_ALIGN(32) RTCBuildPrimitive
 
 struct RTC_ALIGN(32) RTCBuildRef
 {
-	float lower_x, lower_y, lower_z;
-	unsigned int geomID;
-	float upper_x, upper_y, upper_z;
-	unsigned int numPrimitives;
-	void* node;
-	float bounds_area;
+  float lower_x, lower_y, lower_z;
+  unsigned int geomID;
+  float upper_x, upper_y, upper_z;
+  unsigned int numPrimitives;
+  void* node;
+  float bounds_area;
 };
 
 /* Opaque thread local allocator type */
