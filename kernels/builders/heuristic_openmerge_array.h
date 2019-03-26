@@ -451,6 +451,7 @@ namespace embree
       private:
         PrimRef* const prims0;
         const NodeOpenerFunc& nodeOpenerFunc;
+		const CanOpenNodeFunc& canOpenNodeFunc;
         size_t max_open_size;
       };
   }
